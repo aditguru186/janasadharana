@@ -147,3 +147,6 @@ frontend/build/
 backend/uploads/
 uploads/
 *.db
+
+# Local port binds (never deploy this to Coolify)
+docker-compose.override.yml

@@ -10,13 +10,19 @@ This stack is **Docker Compose** (db + redis + backend + frontend). Prefer one *
 
 ## Ports (reference)
 
-| Service   | App listen | Local host (dev) | Coolify / prod |
-|-----------|------------|------------------|----------------|
-| Postgres  | 5432       | 15432→5432       | **Internal only** (do not publish) |
-| API       | 5430       | 5430             | Domain → proxy to container `5430` |
-| Web       | 5431       | 5431             | Domain → proxy to container `5431` |
+| Service   | Container listen | Coolify / prod | Local (override file) |
+|-----------|------------------|----------------|------------------------|
+| Postgres  | 5432             | **Internal only** (no host bind) | `15432→5432` via override |
+| API       | 5430             | Coolify domain → service `backend` | `5430` |
+| Web       | 5431             | Coolify domain → service `frontend` | `5431` |
 
-On Coolify, traffic hits Coolify’s reverse proxy (443). Container ports are mapped by Compose; you only set **domains** on the published services.
+**Coolify:** main `docker-compose.yml` only uses `expose` (no host ports). That avoids
+`Bind for 0.0.0.0:15432 failed: port is already allocated`.
+
+**Local laptop:** `cp docker-compose.override.example.yml docker-compose.override.yml`
+
+In Coolify UI: attach domains to **frontend** and **backend** services; proxy uses the
+internal Docker network. Do not publish Postgres on a public port.
 
 ---
 
