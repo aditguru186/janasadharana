@@ -50,7 +50,7 @@ Stack:
 | Cache | **Redis** (in Compose) | Ready for distributed rate-limit / session scale-out |
 | Deploy | **Docker Compose → Coolify** | Fits ~16GB hosts; path to multi-replica + K8s later |
 
-**MongoDB was intentionally not used.** Postgres + PostGIS is the source of truth (users, roles, assignments, unique upvotes, audit, geo).
+Postgres + PostGIS is the source of truth (users, roles, assignments, unique upvotes, audit, geo).
 
 ---
 
@@ -86,7 +86,7 @@ Stack:
 
 ## 3. Architecture decisions
 
-### Why PostgreSQL + PostGIS (not Mongo)
+### Why PostgreSQL + PostGIS
 
 | Need | Postgres fit |
 |------|----------------|
@@ -550,7 +550,7 @@ On Coolify: redeploy / rebuild image as usual for the Compose resource.
 
 ### Historical note (pre-rebuild issues that were fixed)
 
-The previous prototype had open write APIs (no auth), CORS `*`, Mongo without auth, unlimited upvotes, client-only kanban (`limit=50`), unused Postgres/Supabase services, and no indexes for list filters. The current stack addresses those for municipal production use.
+An earlier prototype lacked auth on writes, used open CORS, unlimited upvotes, client-only kanban limits, and weak indexing. The current stack is built for municipal production use with RBAC, geofence, and Postgres as the sole datastore.
 
 ---
 
