@@ -1,0 +1,23 @@
+# Local laptop only — copy to docker-compose.override.yml (gitignored).
+# Coolify must NOT use this file (no host port binds on the server).
+#
+#   cp docker-compose.override.example.yml docker-compose.override.yml
+#   docker compose up -d
+#
+# Then:
+#   Web  http://localhost:5431
+#   API  http://localhost:5430/api/v1
+#   DB   localhost:15432  (user/password/db from .env)
+
+services:
+  db:
+    ports:
+      - "${POSTGRES_PORT:-15432}:5432"
+
+  backend:
+    ports:
+      - "${BACKEND_PORT:-5430}:5430"
+
+  frontend:
+    ports:
+      - "${FRONTEND_PORT:-5431}:5431"
