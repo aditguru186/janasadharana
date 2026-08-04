@@ -1,0 +1,158 @@
+# Janasadharana — Puri Municipality
+# Local / Coolify-friendly stack (Docker Compose)
+# Resources target: ~16GB host (Coolify). Scale API replicas later on K8s.
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-janasadharana}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-janasadharana}
+      POSTGRES_DB: ${POSTGRES_DB:-janasadharana}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Host 15432 → container Postgres 5432 (avoids clashing with local Postgres)
+      - "${POSTGRES_PORT:-15432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-janasadharana} -d ${POSTGRES_DB:-janasadharana}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    networks:
+      - janasadharana
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks:
+      - janasadharana
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 5430
+      HOST: 0.0.0.0
+      # Inside Compose network, Postgres always listens on 5432
+      DATABASE_URL: postgres://${POSTGRES_USER:-janasadharana}:${POSTGRES_PASSWORD:-janasadharana}@db:5432/${POSTGRES_DB:-janasadharana}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-local-dev-only-access-secret-32b-min}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-local-dev-only-refresh-secret-32b-min}
+      ALLOW_INSECURE_DEFAULTS: ${ALLOW_INSECURE_DEFAULTS:-true}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-30d}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5431}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-200}
+      RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-1 minute}
+      PURI_LAT: ${PURI_LAT:-19.8134}
+      PURI_LNG: ${PURI_LNG:-85.8245}
+      GEOFENCE_RADIUS_METERS: ${GEOFENCE_RADIUS_METERS:-20000}
+      PG_POOL_MAX: ${PG_POOL_MAX:-20}
+      UPLOAD_DIR: /usr/src/app/uploads
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET_NAME: ${R2_BUCKET_NAME:-cow-welfare-puri}
+      R2_KEY_PREFIX: ${R2_KEY_PREFIX:-}
+      R2_ARTEFACTS_FOLDER: ${R2_ARTEFACTS_FOLDER:-cow-welfare-artefacts}
+      R2_AUDIOS_FOLDER: ${R2_AUDIOS_FOLDER:-cow-welfare-audios}
+      R2_PUBLIC_URL: ${R2_PUBLIC_URL:-}
+      SEED_ADMIN_PHONE: ${SEED_ADMIN_PHONE:-9999999999}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-ChangeMeAdmin!23}
+      SEED_OFFICER_PHONE: ${SEED_OFFICER_PHONE:-8888888888}
+      SEED_OFFICER_PASSWORD: ${SEED_OFFICER_PASSWORD:-ChangeMeOfficer!23}
+      RUN_SEED: ${RUN_SEED:-true}
+    ports:
+      - "${BACKEND_PORT:-5430}:5430"
+    volumes:
+      - uploads_data:/usr/src/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5430/api/v1/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    networks:
+      - janasadharana
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:5430/api/v1}
+    restart: unless-stopped
+    environment:
+      PORT: 5431
+      HOST: 0.0.0.0
+      # Runtime override if your adapter reads it; build-time PUBLIC_API_URL is primary for SvelteKit
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:5430/api/v1}
+    ports:
+      - "${FRONTEND_PORT:-5431}:5431"
+    depends_on:
+      backend:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks:
+      - janasadharana
+
+  # One-shot seed (optional). Backend also seeds when RUN_SEED=true via entrypoint.
+  seed:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    profiles: ["seed"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-janasadharana}:${POSTGRES_PASSWORD:-janasadharana}@db:5432/${POSTGRES_DB:-janasadharana}
+      SEED_ADMIN_PHONE: ${SEED_ADMIN_PHONE:-9999999999}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-ChangeMeAdmin!23}
+      SEED_OFFICER_PHONE: ${SEED_OFFICER_PHONE:-8888888888}
+      SEED_OFFICER_PASSWORD: ${SEED_OFFICER_PASSWORD:-ChangeMeOfficer!23}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change-me-access-secret-min-32-chars!!}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-me-refresh-secret-min-32-chars!}
+    entrypoint: ["sh", "-c", "node src/db/migrate.js && node src/db/seed.js"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - janasadharana
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:
+
+networks:
+  janasadharana:
+    driver: bridge
