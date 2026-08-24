@@ -70,7 +70,7 @@ services:
       ALLOW_INSECURE_DEFAULTS: ${ALLOW_INSECURE_DEFAULTS:-true}
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
       JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-30d}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5431}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5431,https://www.janasadharana.bytesphereinnovation.com,https://janasadharana.bytesphereinnovation.com}
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-200}
       RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-1 minute}
       PURI_LAT: ${PURI_LAT:-19.8134}

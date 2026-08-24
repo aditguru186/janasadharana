@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const { parseCorsOrigins } = require('./utils/corsOrigins');
 
 const rootEnv = path.resolve(__dirname, '../../.env');
 if (fs.existsSync(rootEnv)) {
@@ -34,10 +35,7 @@ const config = {
     accessTtl: process.env.JWT_ACCESS_TTL || '15m',
     refreshTtl: process.env.JWT_REFRESH_TTL || '30d'
   },
-  corsOrigins: (process.env.CORS_ORIGINS || 'http://localhost:5431')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean),
+  corsOrigins: parseCorsOrigins(process.env.CORS_ORIGINS),
   rateLimit: {
     max: parseInt(process.env.RATE_LIMIT_MAX || '200', 10),
     timeWindow: process.env.RATE_LIMIT_WINDOW || '1 minute'

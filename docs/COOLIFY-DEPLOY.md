@@ -102,17 +102,52 @@ Generate secrets:
 
 | Host role | Example domain | Points to service |
 |-----------|----------------|-------------------|
-| Web UI    | `puri.yourdomain.com` or `janasadharana.bytesphereinnovation.com` | **frontend** |
-| API       | `api-puri.yourdomain.com` | **backend** |
+| Web UI    | `www.janasadharana.bytesphereinnovation.com` **and** apex `janasadharana.bytesphereinnovation.com` | **frontend** |
+| API       | `api.janasadharana.bytesphereinnovation.com` | **backend** |
 
-1. Cloudflare DNS: **A** records → `5.223.44.201` (grey cloud first, then orange if proxy OK)
-2. Coolify → attach domains to the compose services / ports Coolify exposes
-3. Enable Let’s Encrypt
+Coolify must list **every hostname** you will open in a browser. If only `www` is attached, apex returns Coolify/Traefik **503** even when containers are Running.
+
+#### Recommended DNS (Bunny DNS as pure DNS — simplest with Coolify TLS)
+
+Point records **straight at the Coolify server** (not a Bunny Pull Zone edge IP):
+
+| Type | Name | Value |
+|------|------|--------|
+| A | `janasadharana` | `5.223.44.201` |
+| A | `www.janasadharana` | `5.223.44.201` |
+| A | `api.janasadharana` | `5.223.44.201` |
+
+Then in Coolify attach those three FQDNs to frontend / frontend / backend and enable Let’s Encrypt.
+
+#### If you use a Bunny **Pull Zone** (CDN proxy)
+
+`no available server` means Bunny reached **no healthy origin**. Common mistakes:
+
+1. Origin hostname is the **same public CDN name** (loop) → always 503  
+2. Origin Host header is a domain **not** attached in Coolify (e.g. apex when only `www` is registered)  
+3. Public DNS for `www` is **missing** while only apex is on the pull zone  
+
+Working Pull Zone pattern:
+
+| Setting | Value |
+|---------|--------|
+| Origin URL | `http://5.223.44.201` or `https://5.223.44.201` (the **server IP**, not the site hostname) |
+| Host header / forward host | `www.janasadharana.bytesphereinnovation.com` (must match Coolify domain) |
+| DNS apex/www | CNAME/A to the pull zone as Bunny documents |
+
+Verify origin **bypassing** Bunny before blaming Compose:
+
+```bash
+# Must be 200 if frontend is up and domain is attached in Coolify
+curl -skI -H "Host: www.janasadharana.bytesphereinnovation.com" https://5.223.44.201/
+# Apex needs its own Coolify domain attachment or this stays 503
+curl -skI -H "Host: janasadharana.bytesphereinnovation.com" https://5.223.44.201/
+```
 
 Set:
 
-- `PUBLIC_API_URL=https://<api-host>/api/v1`
-- `CORS_ORIGINS=https://<web-host>`
+- `PUBLIC_API_URL=https://<api-host>/api/v1`  (**not** `http://localhost:5430/...`)
+- `CORS_ORIGINS=https://www.janasadharana.bytesphereinnovation.com,https://janasadharana.bytesphereinnovation.com`
 
 **Rebuild frontend** after changing `PUBLIC_API_URL` (it is a **build-time** arg for SvelteKit).
 
@@ -186,8 +221,13 @@ Suggested:
 
 | Symptom | Fix |
 |---------|-----|
+| `no available server` (Bunny 503) | Pull Zone origin unhealthy: origin must be Coolify IP + Host of a **Coolify-attached** domain; fix DNS so www/apex resolve; do not loop CDN→CDN |
+| Public URL 503, but Host+Coolify-IP returns 200 | DNS/CDN only — app is fine; fix Bunny records/origin, not Compose rebuild |
+| Apex 503, www 200 on Coolify IP | Add apex domain to **frontend** service in Coolify + LE |
+| www does not resolve (curl 000) | Create `www` A/CNAME in Bunny DNS |
 | Web loads, API fails | Wrong `PUBLIC_API_URL` (must be browser-reachable + `/api/v1`) |
-| CORS errors | `CORS_ORIGINS` must list exact web origin (scheme + host) |
+| Frontend still calls `localhost:5430` | Env still local; set prod `PUBLIC_API_URL` and **rebuild** frontend |
+| CORS errors / “Origin not allowed” on www | `CORS_ORIGINS` must list **both** `https://www.…` and apex (scheme + host). Restart **backend** after changing it; no frontend rebuild. Code also auto-allows the www/apex pair. |
 | DB not ready | Wait for health; check Postgres volume / password (password only applied on **first** volume create) |
 | Weak JWT crash | Set strong secrets or temporarily `ALLOW_INSECURE_DEFAULTS=true` only for smoke |
 | Media 503 / no images | Set R2_* and public URL; bucket `cow-welfare-puri` exists |
