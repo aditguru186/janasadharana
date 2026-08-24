@@ -55,7 +55,8 @@ async function buildApp(opts = {}) {
       }
       // Coolify preview / same-host flexibility in non-strict cases
       if (!config.isProd) return cb(null, true);
-      cb(new Error('Not allowed by CORS'), false);
+      // Do not throw: throwing turns OPTIONS preflight into 500 instead of 403
+      return cb(null, false);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS']
