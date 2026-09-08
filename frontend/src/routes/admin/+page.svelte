@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { auth } from '$lib/auth.js';
-	import { AdminAPI, GrievanceAPI, LABELS } from '$lib/api.js';
+	import { AdminAPI, AgentsAPI, CowConcernAPI, GrievanceAPI, LABELS } from '$lib/api.js';
 
 	const BOARD_STATUSES = ['open', 'assigned', 'in_progress', 'resolved'];
 
@@ -21,6 +21,7 @@
 
 	let stats = null;
 	let officers = [];
+	let agents = [];
 	let byStatus = {};
 	let loading = true;
 	let error = '';
@@ -29,6 +30,27 @@
 	let busyId = '';
 	/** Mobile tab: which column is visible */
 	let activeTab = 'open';
+
+	function asBoardTicket(g) {
+		return { ...g, kind: 'grievance' };
+	}
+
+	function cowAsBoardTicket(c) {
+		const text = c.concernText || 'Cow welfare concern';
+		return {
+			id: c.id,
+			kind: 'cow',
+			title: text.slice(0, 80),
+			description: text,
+			category: 'cow_welfare',
+			status: c.status,
+			trackingCode: c.trackingCode,
+			assigneeId: c.assignedTo?.id || null,
+			assigneeName: c.assignedTo?.fullName || null,
+			upvoteCount: 0,
+			createdAt: c.createdAt || c.date
+		};
+	}
 
 	const CATEGORIES = Object.keys(LABELS.categories);
 
@@ -39,23 +61,41 @@
 		loading = true;
 		error = '';
 		try {
-			const [statsRes, officersRes, ...lists] = await Promise.all([
+			const cowOnly = category === 'cow_welfare';
+			const civicOnly = category && category !== 'cow_welfare';
+
+			const [statsRes, officersRes, agentsRes, civicLists, cowLists] = await Promise.all([
 				AdminAPI.stats(),
 				AdminAPI.officers(),
-				...BOARD_STATUSES.map((s) =>
-					GrievanceAPI.list({
-						status: s,
-						category: category || undefined,
-						limit: 40,
-						page: 1
-					})
-				)
+				AgentsAPI.list().catch(() => ({ data: [] })),
+				cowOnly
+					? Promise.resolve(BOARD_STATUSES.map(() => ({ data: [] })))
+					: Promise.all(
+							BOARD_STATUSES.map((s) =>
+								GrievanceAPI.list({
+									status: s,
+									category: civicOnly ? category : undefined,
+									limit: 40,
+									page: 1
+								})
+							)
+						),
+				civicOnly
+					? Promise.resolve(BOARD_STATUSES.map(() => ({ data: [] })))
+					: Promise.all(
+							BOARD_STATUSES.map((s) =>
+								CowConcernAPI.list({ status: s, limit: 40, page: 1 })
+							)
+						)
 			]);
 			stats = statsRes.data;
 			officers = officersRes.data || [];
+			agents = agentsRes.data || [];
 			const next = {};
 			BOARD_STATUSES.forEach((s, i) => {
-				next[s] = lists[i].data || [];
+				const civic = (civicLists[i]?.data || []).map(asBoardTicket);
+				const cows = (cowLists[i]?.data || []).map(cowAsBoardTicket);
+				next[s] = [...cows, ...civic];
 			});
 			byStatus = next;
 		} catch (e) {
@@ -83,8 +123,9 @@
 		actionMsg = '';
 		busyId = g.id;
 		try {
-			if (g.status === 'open' && !g.assigneeId && $auth.user?.id) {
-				// Assign to me → status becomes "assigned" (same as proceed)
+			if (g.kind === 'cow') {
+				await CowConcernAPI.updateStatus(g.id, next);
+			} else if (g.status === 'open' && !g.assigneeId && $auth.user?.id) {
 				await GrievanceAPI.assign(g.id, $auth.user.id);
 			} else {
 				await GrievanceAPI.updateStatus(g.id, next);
@@ -101,7 +142,11 @@
 		if (!confirm(`Reject ticket ${g.trackingCode}?`)) return;
 		busyId = g.id;
 		try {
-			await GrievanceAPI.updateStatus(g.id, 'rejected', 'Rejected by staff');
+			if (g.kind === 'cow') {
+				await CowConcernAPI.updateStatus(g.id, 'rejected', 'Rejected by staff');
+			} else {
+				await GrievanceAPI.updateStatus(g.id, 'rejected', 'Rejected by staff');
+			}
 			actionMsg = `Rejected ${g.trackingCode}`;
 			await loadBoard();
 		} catch (e) {
@@ -115,16 +160,26 @@
 		busyId = g.id;
 		actionMsg = '';
 		try {
-			await GrievanceAPI.assign(g.id, assigneeId);
-			const who =
-				officers.find((o) => o.id === assigneeId)?.fullName ||
-				(assigneeId === $auth.user?.id ? 'you' : 'staff');
-			actionMsg = `Assigned ${g.trackingCode} → ${who}`;
+			if (g.kind === 'cow') {
+				await CowConcernAPI.assign(g.id, assigneeId);
+				const who = agents.find((a) => a.id === assigneeId)?.fullName || 'agent';
+				actionMsg = `Assigned ${g.trackingCode} → ${who}`;
+			} else {
+				await GrievanceAPI.assign(g.id, assigneeId);
+				const who =
+					officers.find((o) => o.id === assigneeId)?.fullName ||
+					(assigneeId === $auth.user?.id ? 'you' : 'staff');
+				actionMsg = `Assigned ${g.trackingCode} → ${who}`;
+			}
 			await loadBoard();
 		} catch (e) {
 			error = e.message;
 		}
 		busyId = '';
+	}
+
+	function ticketHref(g) {
+		return g.kind === 'cow' ? `/track?code=${g.trackingCode}` : `/grievance/${g.id}`;
 	}
 
 	function filterCategory(c) {
@@ -262,7 +317,7 @@
 					{#each byStatus[s] || [] as g (g.id)}
 						<article class="glass-panel task-card" class:busy={busyId === g.id}>
 							<div class="task-top">
-								<a class="task-title" href="/grievance/{g.id}">{g.title}</a>
+								<a class="task-title" href={ticketHref(g)}>{g.title}</a>
 								<span class="badge badge-{g.status}">{LABELS.statuses[g.status]}</span>
 							</div>
 							<p class="task-desc">{shortDesc(g.description)}</p>
@@ -278,6 +333,21 @@
 								<label class="assignee-label" for="assign-{g.id}">Assignee</label>
 								{#if s === 'resolved'}
 									<span class="assignee-value">{g.assigneeName || '—'}</span>
+								{:else if g.kind === 'cow'}
+									<select
+										id="assign-{g.id}"
+										class="select-field assignee-select"
+										disabled={busyId === g.id}
+										value={g.assigneeId || ''}
+										on:change={(e) => assignTo(g, e.currentTarget.value)}
+									>
+										<option value="">
+											{s === 'open' ? '— Unassigned —' : '— Choose agent —'}
+										</option>
+										{#each agents as a}
+											<option value={a.id}>{a.fullName}</option>
+										{/each}
+									</select>
 								{:else}
 									<select
 										id="assign-{g.id}"
@@ -300,7 +370,7 @@
 							</div>
 
 							<div class="task-actions">
-								<a class="btn btn-sm btn-ghost" href="/grievance/{g.id}">Open</a>
+								<a class="btn btn-sm btn-ghost" href={ticketHref(g)}>Open</a>
 								{#if NEXT[g.status]}
 									<button
 										type="button"
@@ -328,10 +398,17 @@
 			{/each}
 		</div>
 
-		{#if officers.length}
+		{#if officers.length || agents.length}
 			<p class="staff-line muted">
-				<strong>Staff pool:</strong>
-				{officers.map((o) => o.fullName).join(' · ')}
+				{#if officers.length}
+					<strong>Staff pool:</strong>
+					{officers.map((o) => o.fullName).join(' · ')}
+				{/if}
+				{#if agents.length}
+					{' '}
+					<strong>Agents:</strong>
+					{agents.map((a) => a.fullName).join(' · ')}
+				{/if}
 			</p>
 		{/if}
 	{/if}
